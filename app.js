@@ -1,9 +1,9 @@
 import express from "express";
 import cors from "cors";
-import nodemailer from "nodemailer";
 import rateLimit from "express-rate-limit";
 import xss from "xss";
 import validator from "validator";
+import { Resend } from "resend";
 
 const app = express();
 
@@ -11,7 +11,6 @@ app.set("trust proxy", 1);
 
 // ------------------------------------------------------------
 // 5. CORS — restrict to your frontend origin(s) only.
-//    List them comma-separated in ALLOWED_ORIGINS.
 // ------------------------------------------------------------
 const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || "")
   .split(",")
@@ -34,7 +33,7 @@ app.use(express.json({ limit: "10kb" }));
 app.disable("x-powered-by");
 
 // ------------------------------------------------------------
-// 1a. Field length limits
+// Field length limits
 // ------------------------------------------------------------
 const LIMITS = {
   name: { min: 2, max: 100 },
@@ -55,23 +54,24 @@ const escapeHtml = (value) =>
   });
 
 // ------------------------------------------------------------
-// 2. TRANSPORTER — built ONCE at startup and reused.
-//    SMTP timeouts set here so a stalled send fails fast.
+// 2. RESEND CLIENT — created lazily on first use and reused.
+//    (REST API, no SMTP connection to maintain. Free tier:
+//    100 emails/day, 3000/month.) Constructing is deferred so the
+//    app still boots if the API key env var is temporarily missing.
 // ------------------------------------------------------------
-const transporter = nodemailer.createTransport({
-  service: "gmail",
-  auth: {
-    user: process.env.EMAIL_USER,
-    pass: process.env.EMAIL_PASS,
-  },
-  connectionTimeout: 5000,
-  greetingTimeout: 5000,
-  socketTimeout: 10000,
-});
+let resendClient = null;
+const getResend = () => {
+  if (!resendClient) resendClient = new Resend(process.env.RESEND_API_KEY);
+  return resendClient;
+};
+// Inbox that receives all form messages (use onboarding@resend.dev
+// to contact yourself while setting up, or your own domain sender).
+const TO_ADDR = process.env.EMAIL_USER; // recipient
+const FROM_ADDR = process.env.FROM_EMAIL || "onboarding@resend.dev";
 
 // ------------------------------------------------------------
-// 7. Timeout guard — races sendMail against a hard deadline so
-//    the response always arrives.
+// 7. Timeout guard — races Resend against a hard deadline so the
+//    response always arrives.
 // ------------------------------------------------------------
 const SEND_TIMEOUT_MS = 9_000;
 
@@ -84,7 +84,7 @@ const withTimeout = (promise, ms) =>
   ]);
 
 // ------------------------------------------------------------
-// 1b. Server-side validation — email format + length checks.
+// 1. Server-side validation — email format + length checks.
 // ------------------------------------------------------------
 const validateContact = ({ name, email, service, message }) => {
   if (typeof name !== "string" || typeof email !== "string" || typeof message !== "string") {
@@ -129,10 +129,9 @@ app.get("/", (req, res) => {
     status: "Alien Backend Running 👽",
     diagnostics: {
       allowedOrigins: ALLOWED_ORIGINS,
-      emailUserSet: Boolean(process.env.EMAIL_USER),
-      emailUserMasked: mask(process.env.EMAIL_USER),
-      emailPassSet: Boolean(process.env.EMAIL_PASS),
-      emailPassLength: process.env.EMAIL_PASS ? process.env.EMAIL_PASS.length : 0
+      resendKeySet: Boolean(process.env.RESEND_API_KEY),
+      fromEmail: FROM_ADDR,
+      toEmailMasked: mask(TO_ADDR)
     }
   });
 });
@@ -164,11 +163,11 @@ app.post("/api/contact", contactLimiter, async (req, res) => {
     .slice(0, 200);
 
   try {
-    await withTimeout(
-      transporter.sendMail({
-        from: `"${clean.name}" <${clean.email}>`,
+    const { data, error } = await withTimeout(
+      getResend().emails.send({
+        from: FROM_ADDR,
+        to: TO_ADDR,
         replyTo: clean.email,
-        to: process.env.EMAIL_USER,
         subject,
         html: `
           <h2>New Message from Alien Portfolio</h2>
@@ -180,6 +179,9 @@ app.post("/api/contact", contactLimiter, async (req, res) => {
       }),
       SEND_TIMEOUT_MS
     );
+
+    // Resend returns { error } instead of throwing on API failures.
+    if (error) throw new Error(error.message || "Resend refused to send");
 
     return res.json({ success: true, message: "Message sent!" });
   } catch (err) {
