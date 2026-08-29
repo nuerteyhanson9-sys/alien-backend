@@ -124,7 +124,17 @@ const contactLimiter = rateLimit({
 });
 
 app.get("/", (req, res) => {
-  res.send("Alien Backend Running 👽");
+  const mask = (v) => (v ? v.slice(0, 3) + "…" + v.slice(-3) : null);
+  res.json({
+    status: "Alien Backend Running 👽",
+    diagnostics: {
+      allowedOrigins: ALLOWED_ORIGINS,
+      emailUserSet: Boolean(process.env.EMAIL_USER),
+      emailUserMasked: mask(process.env.EMAIL_USER),
+      emailPassSet: Boolean(process.env.EMAIL_PASS),
+      emailPassLength: process.env.EMAIL_PASS ? process.env.EMAIL_PASS.length : 0
+    }
+  });
 });
 
 app.post("/api/contact", contactLimiter, async (req, res) => {
