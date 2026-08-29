@@ -134,16 +134,7 @@ const contactLimiter = rateLimit({
 });
 
 app.get("/", (req, res) => {
-  const mask = (v) => (v ? v.slice(0, 3) + "…" + v.slice(-3) : null);
-  res.json({
-    status: "Alien Backend Running 👽",
-    diagnostics: {
-      allowedOrigins: ALLOWED_HOSTS,
-      resendKeySet: Boolean(process.env.RESEND_API_KEY),
-      fromEmail: FROM_ADDR,
-      toEmailMasked: mask(TO_ADDR)
-    }
-  });
+  res.send("Alien Backend Running 👽");
 });
 
 app.post("/api/contact", contactLimiter, async (req, res) => {
