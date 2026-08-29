@@ -11,15 +11,25 @@ app.set("trust proxy", 1);
 
 // ------------------------------------------------------------
 // 5. CORS — restrict to your frontend origin(s) only.
+//    Origins are normalized (https:// + trailing slash ignored) so
+//    a whitelist entry like "nuerteyhanson9-sys.github.io" matches
+//    the real request origin "https://nuerteyhanson9-sys.github.io".
 // ------------------------------------------------------------
-const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || "")
+const normalizeOrigin = (value) =>
+  String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/^https?:\/\//, "")
+    .replace(/\/+$/, "");
+
+const ALLOWED_HOSTS = (process.env.ALLOWED_ORIGINS || "")
   .split(",")
-  .map((o) => o.trim())
+  .map(normalizeOrigin)
   .filter(Boolean);
 
 const corsOptions = {
   origin(origin, callback) {
-    if (!origin || ALLOWED_ORIGINS.includes(origin)) {
+    if (!origin || ALLOWED_HOSTS.includes(normalizeOrigin(origin))) {
       return callback(null, true);
     }
     return callback(new Error("Not allowed by CORS"));
@@ -128,7 +138,7 @@ app.get("/", (req, res) => {
   res.json({
     status: "Alien Backend Running 👽",
     diagnostics: {
-      allowedOrigins: ALLOWED_ORIGINS,
+      allowedOrigins: ALLOWED_HOSTS,
       resendKeySet: Boolean(process.env.RESEND_API_KEY),
       fromEmail: FROM_ADDR,
       toEmailMasked: mask(TO_ADDR)
